@@ -1,0 +1,6 @@
+requests
+polib
+beautifulsoup4
+tqdm
+argostranslate
+lxml
