@@ -99,11 +99,15 @@ def process_po_file() -> int:
 
     # First pass: clean and deduplicate
     for entry in po:
-        # Clean msgid (remove leading/trailing newlines)
-        if entry.msgid and "\n" in entry.msgid:
+        # Normaliser msgid (supprimer \n inutiles en début/fin)
+        if entry.msgid:
             entry.msgid = entry.msgid.strip()
 
-        # Handle duplicates: keep first non-empty msgstr
+        # Normaliser msgstr (supprimer \n inutiles)
+        if entry.msgstr:
+            entry.msgstr = entry.msgstr.strip()
+
+        # Handle duplicates
         if entry.msgid in seen:
             existing = seen[entry.msgid]
             if not existing.msgstr and entry.msgstr:
@@ -115,7 +119,7 @@ def process_po_file() -> int:
     # Second pass: translate empty strings
     for entry in tqdm(seen.values(), desc=f"Processing {PO_INPUT.name}"):
         if entry.msgstr == "" and entry.msgid:
-            text = entry.msgid.strip()
+            text = entry.msgid
             if text:
                 new_translation = translate_text(text)
                 if new_translation and new_translation != text:
@@ -124,7 +128,7 @@ def process_po_file() -> int:
                     translated_count += 1
                 time.sleep(SLEEP_TIME)
 
-    # Save results
+    # Save with proper formatting
     new_po = polib.POFile()
     for entry in seen.values():
         new_po.append(entry)
