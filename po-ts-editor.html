@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PO/TS Translation Editor</title>
+    <style>
+        :root {
+            --bg-primary: #f0f0f0;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e8e8e8;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --text-muted: #999999;
+            --border-color: #cccccc;
+            --success-color: #28a745;
+            --warning-color: #ffc107;
+            --danger-color: #dc3545;
+            --info-color: #17a2b8;
+            --header-height: 40px;
+            --sidebar-width: 250px;
+            --status-bar-height: 35px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-size: 13px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            height: var(--header-height);
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .header h1 { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+        .header-actions { margin-left: auto; display: flex; gap: 8px; }
+
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-section { border-bottom: 1px solid var(--border-color); padding: 10px; overflow: hidden; }
+        .sidebar-section:last-child { border-bottom: none; }
+        .sidebar-title { font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; }
+        .file-list { overflow-y: auto; flex: 1; }
+
+        .file-item {
+            padding: 6px 8px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-bottom: 2px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .file-item:hover { background: var(--bg-tertiary); }
+        .file-item.active { background: #d4e6f1; border-left: 3px solid var(--info-color); }
+        .file-icon {
+            width: 16px; height: 16px;
+            background: var(--info-color);
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white; font-size: 10px; font-weight: bold;
+        }
+        .file-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+        .file-stats { font-size: 11px; color: var(--text-muted); }
+
+        .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        .toolbar {
+            height: 35px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            gap: 10px;
+        }
+        .toolbar select, .toolbar input {
+            height: 25px; padding: 0 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            font-size: 12px;
+            background: var(--bg-secondary);
+        }
+        .toolbar select:focus, .toolbar input:focus { outline: none; border-color: var(--info-color); }
+        .toolbar button {
+            height: 25px; padding: 0 12px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            border-radius: 3px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .toolbar button:hover { background: var(--bg-tertiary); }
+
+        .table-container { flex: 1; overflow: auto; background: var(--bg-secondary); }
+
+        .translation-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .translation-table th {
+            position: sticky; top: 0;
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--border-color);
+            padding: 8px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-secondary);
+            z-index: 10;
+        }
+        .translation-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+        .translation-table tr:hover { background: #f8f9fa; }
+        .translation-table tr.selected { background: #d4e6f1; }
+        .message-cell { white-space: pre-wrap; word-break: break-word; max-width: 400px; }
+
+        .translation-input {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            font-family: inherit;
+            font-size: 12px;
+            background: var(--bg-secondary);
+        }
+        .translation-input:focus { outline: none; border-color: var(--info-color); background: white; }
+        .translation-input.empty { color: var(--text-muted); }
+        .context-info {
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .status-bar {
+            height: var(--status-bar-height);
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            gap: 20px;
+            font-size: 12px;
+        }
+        .status-item { display: flex; align-items: center; gap: 8px; }
+        .status-label { color: var(--text-secondary); }
+        .status-value { font-weight: 500; }
+        .status-value.success { color: var(--success-color); }
+        .status-value.warning { color: var(--warning-color); }
+        .status-value.danger { color: var(--danger-color); }
+
+        .progress-container {
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-left: auto;
+            width: 200px;
+        }
+        .progress-bar {
+            height: 100%;
+            background: var(--success-color);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        .progress-bar.warning { background: var(--warning-color); }
+        .progress-bar.danger { background: var(--danger-color); }
+
+        .upload-area {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            background: var(--bg-secondary);
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            margin: 20px;
+        }
+        .upload-area.visible { display: flex; }
+        .upload-icon { font-size: 48px; color: var(--text-muted); margin-bottom: 15px; }
+        .upload-text { color: var(--text-secondary); margin-bottom: 10px; }
+        .upload-btn {
+            padding: 10px 20px;
+            background: var(--info-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .upload-btn:hover { background: #138496; }
+
+        .filter-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+        .filter-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        .filter-badge .remove { cursor: pointer; color: var(--text-muted); }
+        .filter-badge .remove:hover { color: var(--danger-color); }
+
+        .right-sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .right-sidebar-section { border-bottom: 1px solid var(--border-color); padding: 10px; overflow: hidden; }
+        .right-sidebar-section:last-child { border-bottom: none; }
+        .path-list { overflow-y: auto; flex: 1; }
+        .path-item {
+            padding: 4px 8px;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            word-break: break-all;
+        }
+        .notes-container { flex: 1; padding: 10px; overflow-y: auto; }
+        .notes-input {
+            width: 100%;
+            min-height: 60px;
+            padding: 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 12px;
+            resize: vertical;
+        }
+        .notes-input:focus { outline: none; border-color: var(--info-color); }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-tertiary); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        @media (max-width: 1200px) { .right-sidebar { display: none; } }
+        @media (max-width: 800px) {
+            .sidebar { display: none; }
+            .toolbar { flex-wrap: wrap; height: auto; padding: 8px 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>PO/TS Translation Editor</h1>
+        <div class="header-actions">
+            <button onclick="exportFile()">💾 Export</button>
+            <button onclick="document.getElementById('fileInput').click()">📁 Open</button>
+            <input type="file" id="fileInput" accept=".po,.ts" onchange="loadFile(event)" style="display: none;" multiple>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-title">Files</div>
+                <div class="file-list" id="fileList"></div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="toolbar">
+                <select id="filterSelect" onchange="applyFilter()">
+                    <option value="all">All</option>
+                    <option value="translated">Translated</option>
+                    <option value="untranslated">Untranslated</option>
+                    <option value="fuzzy">Fuzzy</option>
+                </select>
+                <input type="text" id="searchInput" placeholder="Search..." oninput="searchTranslations()">
+                <div class="filter-badges" id="filterBadges"></div>
+            </div>
+
+            <div class="table-container">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📄</div>
+                    <div class="upload-text">Drag & drop .po or .ts files here</div>
+                    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Or select a file</button>
+                </div>
+                <table class="translation-table" id="translationTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">#</th>
+                            <th style="width: 40%;">Source</th>
+                            <th style="width: 40%;">Translation</th>
+                            <th style="width: 20%;">Context</th>
+                        </tr>
+                    </thead>
+                    <tbody id="translationBody"></tbody>
+                </table>
+            </div>
+
+            <div class="status-bar">
+                <div class="status-item">
+                    <span class="status-label">Translated:</span>
+                    <span class="status-value success" id="translatedCount">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Total:</span>
+                    <span class="status-value" id="totalCount">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Fuzzy:</span>
+                    <span class="status-value warning" id="fuzzyCount">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Untranslated:</span>
+                    <span class="status-value danger" id="untranslatedCount">0</span>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar" id="progressBar" style="width: 0%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-sidebar">
+            <div class="right-sidebar-section">
+                <div class="sidebar-title">Notes</div>
+                <textarea class="notes-input" id="notesInput" placeholder="Add a note..."></textarea>
+            </div>
+            <div class="right-sidebar-section">
+                <div class="sidebar-title">Extracted Comments</div>
+                <div class="notes-container" id="commentsContainer"></div>
+            </div>
+            <div class="right-sidebar-section">
+                <div class="sidebar-title">Paths</div>
+                <div class="path-list" id="pathList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentFile = null;
+        let translations = [];
+        let filteredTranslations = [];
+        let currentFilter = 'all';
+        let searchQuery = '';
+        let files = [];
+
+        function init() {
+            document.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+            document.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files.length > 0) loadFiles(e.dataTransfer.files); });
+            const style = document.createElement('style');
+            style.textContent = `@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } } @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }`;
+            document.head.appendChild(style);
+            updateUploadArea();
+        }
+
+        function updateUploadArea() {
+            document.getElementById('uploadArea').classList.toggle('visible', files.length === 0);
+        }
+
+        function loadFile(event) {
+            if (event.target.files.length > 0) loadFiles(event.target.files);
+            event.target.value = '';
+        }
+
+        function loadFiles(fileList) {
+            let filesLoaded = 0, filesToLoad = 0;
+            for (let i = 0; i < fileList.length; i++) {
+                if (fileList[i].name.endsWith('.po') || fileList[i].name.endsWith('.ts')) filesToLoad++;
+            }
+            if (filesToLoad === 0) { showNotification('No .po or .ts files found', 'error'); return; }
+            for (let i = 0; i < fileList.length; i++) {
+                const file = fileList[i];
+                if (file.name.endsWith('.po') || file.name.endsWith('.ts')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try { parseFile(file.name, e.target.result); filesLoaded++; if (filesLoaded === filesToLoad) updateUploadArea(); }
+                        catch (err) { showNotification(`Error loading ${file.name}: ${err.message}`, 'error'); }
+                    };
+                    reader.onerror = () => showNotification(`Cannot read file ${file.name}`, 'error');
+                    reader.readAsText(file, 'UTF-8');
+                }
+            }
+        }
+
+        function parseFile(filename, content) {
+            const fileData = { filename, content, translations: [] };
+            if (filename.endsWith('.ts')) parseTSFile(content, fileData.translations);
+            else if (filename.endsWith('.po')) parsePOFile(content, fileData.translations);
+            if (fileData.translations.length === 0) showNotification(`No translations found in ${filename}. Check file format.`, 'error');
+            else showNotification(`${fileData.translations.length} entries loaded from ${filename}`, 'info');
+            files.push(fileData);
+            if (files.length === 1) switchToFile(0);
+            updateFileList();
+        }
+
+        function parseTSFile(content, translations) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(content, "text/xml");
+            const contexts = xmlDoc.getElementsByTagName("context");
+            for (let context of contexts) {
+                const contextName = context.getElementsByTagName("name")[0]?.textContent || "";
+                const messages = context.getElementsByTagName("message");
+                for (let message of messages) {
+                    const source = message.getElementsByTagName("source")[0]?.textContent || "";
+                    const translationEl = message.getElementsByTagName("translation")[0];
+                    const translation = translationEl?.textContent || "";
+                    const locationEl = message.getElementsByTagName("location")[0];
+                    const location = locationEl ? `${locationEl.getAttribute("filename")}:${locationEl.getAttribute("line")}` : "";
+                    translations.push({ id: `${contextName}:${source.substring(0, 30)}`, source, translation, context: contextName, location, fuzzy: false, commented: false });
+                }
+            }
+        }
+
+        function parsePOFile(content, translations) {
+            const lines = content.split('\n');
+            let currentEntry = null, currentField = null;
+            for (let line of lines) {
+                line = line.trim();
+                if (line === '') { if (currentEntry && currentField) currentField = null; continue; }
+                if (line.startsWith('#:')) { if (currentEntry) currentEntry.location = line.substring(2).trim(); continue; }
+                if (line.startsWith('#,')) { if (currentEntry && line.includes('fuzzy')) currentEntry.fuzzy = true; continue; }
+                if (line.startsWith('#~')) { currentEntry = null; currentField = null; continue; }
+                if (line.startsWith('msgctxt')) {
+                    if (currentEntry) translations.push(currentEntry);
+                    currentEntry = { id: '', source: '', translation: '', context: extractPoString(line), location: '', fuzzy: false, commented: false };
+                    currentField = 'msgctxt';
+                    continue;
+                }
+                if (line.startsWith('msgid')) {
+                    if (currentEntry && currentEntry.source) translations.push(currentEntry);
+                    currentEntry = { id: '', source: extractPoString(line), translation: '', context: '', location: '', fuzzy: false, commented: false };
+                    currentField = 'msgid';
+                    continue;
+                }
+                if (line.startsWith('msgstr')) {
+                    if (!currentEntry) currentEntry = { id: '', source: '', translation: extractPoString(line), context: '', location: '', fuzzy: false, commented: false };
+                    else currentEntry.translation = extractPoString(line);
+                    currentField = 'msgstr';
+                    continue;
+                }
+                if (line.startsWith('"')) {
+                    if (currentEntry && currentField) {
+                        const text = extractPoString(line);
+                        if (currentField === 'msgid') currentEntry.source += text;
+                        else if (currentField === 'msgstr') currentEntry.translation += text;
+                        else if (currentField === 'msgctxt') currentEntry.context += text;
+                    }
+                    continue;
+                }
+            }
+            if (currentEntry && (currentEntry.source || currentEntry.translation)) {
+                currentEntry.id = (currentEntry.source || currentEntry.context || '').substring(0, 50);
+                translations.push(currentEntry);
+            }
+        }
+
+        function extractPoString(line) {
+            const match = line.match(/^\w+\s+"(.*?)"$/);
+            if (match) return match[1];
+            const contMatch = line.match(/^"(.*?)"$/);
+            if (contMatch) return contMatch[1];
+            if (line.match(/^""$/)) return '';
+            return line;
+        }
+
+        function updateFileList() {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+            files.forEach((file, index) => {
+                const fileItem = document.createElement('div');
+                fileItem.className = `file-item ${currentFile === file ? 'active' : ''}`;
+                fileItem.onclick = () => switchToFile(index);
+                const translatedCount = file.translations.filter(t => t.translation && !t.fuzzy).length;
+                const totalCount = file.translations.length;
+                fileItem.innerHTML = `<div class="file-icon">${file.filename.endsWith('.ts') ? 'TS' : 'PO'}</div><div class="file-name">${file.filename}</div><div class="file-stats">${translatedCount}/${totalCount}</div>`;
+                fileList.appendChild(fileItem);
+            });
+        }
+
+        function switchToFile(index) {
+            currentFile = files[index];
+            translations = currentFile.translations.map(t => ({...t}));
+            filteredTranslations = [...translations];
+            currentFilter = 'all';
+            searchQuery = '';
+            updateFileList();
+            updateTranslationTable();
+            updateStats();
+            updatePathList();
+            document.getElementById('filterSelect').value = 'all';
+            document.getElementById('searchInput').value = '';
+            document.getElementById('filterBadges').innerHTML = '';
+        }
+
+        function updateTranslationTable() {
+            const tbody = document.getElementById('translationBody');
+            tbody.innerHTML = '';
+            filteredTranslations.forEach((translation, index) => {
+                const row = document.createElement('tr');
+                row.dataset.index = index;
+                const isFuzzy = translation.fuzzy;
+                row.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td class="message-cell">${escapeHtml(translation.source)}</td>
+                    <td><textarea class="translation-input ${translation.translation ? '' : 'empty'}" oninput="updateTranslation(${index}, this.value)" onfocus="selectRow(${index})" onblur="deselectRow()">${escapeHtml(translation.translation)}</textarea></td>
+                    <td class="context-info">${escapeHtml(translation.context || translation.location)}</td>`;
+                if (isFuzzy) { row.style.opacity = '0.7'; row.title = 'Fuzzy translation'; }
+                tbody.appendChild(row);
+            });
+            updateStats();
+        }
+
+        function updateTranslation(index, value) {
+            filteredTranslations[index].translation = value;
+            const originalIndex = translations.findIndex(t => t.id === filteredTranslations[index].id);
+            if (originalIndex !== -1) translations[originalIndex].translation = value;
+            updateStats();
+        }
+
+        function selectRow(index) {
+            document.querySelectorAll('#translationBody tr').forEach((row, i) => row.classList.toggle('selected', i === index));
+        }
+        function deselectRow() { document.querySelectorAll('#translationBody tr').forEach(row => row.classList.remove('selected')); }
+
+        function applyFilter() { currentFilter = document.getElementById('filterSelect').value; filterTranslations(); }
+        function searchTranslations() { searchQuery = document.getElementById('searchInput').value.toLowerCase(); filterTranslations(); }
+
+        function filterTranslations() {
+            filteredTranslations = translations.filter(translation => {
+                let passesFilter = true;
+                switch (currentFilter) {
+                    case 'translated': passesFilter = translation.translation && !translation.fuzzy; break;
+                    case 'untranslated': passesFilter = !translation.translation; break;
+                    case 'fuzzy': passesFilter = translation.fuzzy; break;
+                }
+                const passesSearch = !searchQuery || translation.source.toLowerCase().includes(searchQuery) ||
+                    translation.translation.toLowerCase().includes(searchQuery) || translation.context.toLowerCase().includes(searchQuery);
+                return passesFilter && passesSearch;
+            });
+            updateTranslationTable();
+            updateFilterBadges();
+        }
+
+        function updateFilterBadges() {
+            const badges = document.getElementById('filterBadges');
+            badges.innerHTML = '';
+            if (currentFilter !== 'all') {
+                const badge = document.createElement('span');
+                badge.className = 'filter-badge';
+                badge.innerHTML = `${getFilterLabel(currentFilter)}<span class="remove" onclick="clearFilter()">×</span>`;
+                badges.appendChild(badge);
+            }
+            if (searchQuery) {
+                const badge = document.createElement('span');
+                badge.className = 'filter-badge';
+                badge.innerHTML = `"${searchQuery}"<span class="remove" onclick="clearSearch()">×</span>`;
+                badges.appendChild(badge);
+            }
+        }
+        function getFilterLabel(filter) {
+            switch (filter) { case 'translated': return 'Translated'; case 'untranslated': return 'Untranslated'; case 'fuzzy': return 'Fuzzy'; default: return ''; }
+        }
+        function clearFilter() { document.getElementById('filterSelect').value = 'all'; currentFilter = 'all'; filterTranslations(); }
+        function clearSearch() { document.getElementById('searchInput').value = ''; searchQuery = ''; filterTranslations(); }
+
+        function updateStats() {
+            const translated = filteredTranslations.filter(t => t.translation && !t.fuzzy).length;
+            const fuzzy = filteredTranslations.filter(t => t.fuzzy).length;
+            const untranslated = filteredTranslations.filter(t => !t.translation).length;
+            const total = filteredTranslations.length;
+            const translatedPercent = total > 0 ? Math.round((translated / total) * 100) : 0;
+            document.getElementById('translatedCount').textContent = translated;
+            document.getElementById('totalCount').textContent = total;
+            document.getElementById('fuzzyCount').textContent = fuzzy;
+            document.getElementById('untranslatedCount').textContent = untranslated;
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = `${translatedPercent}%`;
+            progressBar.className = 'progress-bar ' + (translatedPercent >= 75 ? '' : translatedPercent >= 50 ? 'warning' : 'danger');
+        }
+
+        function updatePathList() {
+            const pathList = document.getElementById('pathList');
+            pathList.innerHTML = '';
+            if (currentFile) {
+                const uniquePaths = [...new Set(translations.map(t => t.location).filter(l => l))];
+                uniquePaths.forEach(path => {
+                    const pathItem = document.createElement('div');
+                    pathItem.className = 'path-item';
+                    pathItem.textContent = path;
+                    pathList.appendChild(pathItem);
+                });
+            }
+        }
+
+        function exportFile() {
+            if (!currentFile) return;
+            currentFile.translations = translations.map(t => ({...t}));
+            let content;
+            if (currentFile.filename.endsWith('.ts')) content = generateTSContent();
+            else content = generatePOContent();
+            downloadFile(currentFile.filename, content);
+            showNotification(`File exported: ${currentFile.filename}`, 'info');
+        }
+
+        function generateTSContent() {
+            let content = `<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE TS>
+<TS version="2.1" language="en" sourcelanguage="en">
+`;
+            const contexts = {};
+            translations.forEach(t => { if (!contexts[t.context]) contexts[t.context] = []; contexts[t.context].push(t); });
+            for (const [contextName, messages] of Object.entries(contexts)) {
+                content += `  <context>
+    <name>${escapeXml(contextName)}</name>
+`;
+                messages.forEach(msg => {
+                    const [filename, line] = msg.location.split(':');
+                    content += `    <message>
+      <location filename="${escapeXml(filename)}" line="${line || '0'}"/>
+      <source>${escapeXml(msg.source)}</source>
+      <translation>${escapeXml(msg.translation)}</translation>
+    </message>
+`; });
+                content += `  </context>
+`;
+            }
+            content += `</TS>`;
+            return content;
+        }
+
+        function generatePOContent() {
+            let content = `# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: \\n"
+"Report-Msgid-Bugs-To: \\n"
+"POT-Creation-Date: ${new Date().toISOString()}\\n"
+"PO-Revision-Date: ${new Date().toISOString()}\\n"
+"Last-Translator: \\n"
+"Language-Team: \\n"
+"Language: en\\n"
+"MIME-Version: 1.0\\n"
+"Content-Type: text/plain; charset=UTF-8\\n"
+"Content-Transfer-Encoding: 8bit\\n"
+"X-Generator: QualCoder PO Editor\\n"
+
+`;
+            translations.forEach(msg => {
+                if (msg.commented) { content += `# ${escapePo(msg.source)}\n`; return; }
+                if (msg.location) content += `#: ${msg.location}\n`;
+                if (msg.fuzzy) content += `#, fuzzy\n`;
+                if (msg.context) content += `msgctxt "${escapePo(msg.context)}"\n`;
+                content += `msgid "${escapePo(msg.source)}"\nmsgstr "${escapePo(msg.translation)}"\n\n`;
+            });
+            return content;
+        }
+
+        function downloadFile(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+        function escapeXml(text) { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;'); }
+        function escapePo(text) { return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t'); }
+
+        function showNotification(message, type = 'info') {
+            const existing = document.getElementById('notification');
+            if (existing) existing.remove();
+            const notification = document.createElement('div');
+            notification.id = 'notification';
+            notification.style.cssText = `position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 4px; background: ${type === 'error' ? '#dc3545' : '#17a2b8'}; color: white; font-size: 14px; z-index: 10000; box-shadow: 0 2px 10px rgba(0,0,0,0.2); animation: slideIn 0.3s ease;`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            setTimeout(() => { if (notification.parentNode) { notification.style.animation = 'slideOut 0.3s ease'; setTimeout(() => notification.remove(), 300); } }, 3000);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
