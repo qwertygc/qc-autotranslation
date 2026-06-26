@@ -220,7 +220,7 @@ def main():
     total_translated = 0
 
     # Translate PO file if exists
-   # total_translated += translate_po_file()
+    total_translated += translate_po_file()
 
     # Translate TS file if exists
     total_translated += translate_ts_file()
