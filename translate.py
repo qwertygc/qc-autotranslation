@@ -110,9 +110,6 @@ def add_po_headers(po: polib.POFile, lang: str) -> None:
         po.insert(0, header_entry)
 
     # Add or update header fields
-    header_entry.msgstr = ""
-    header_entry.comment = f"Language: {lang}\n"
-
     # Ensure these fields are present in the header
     header_fields = {
         "Project-Id-Version": "PACKAGE VERSION",
