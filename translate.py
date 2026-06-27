@@ -60,7 +60,7 @@ def init_argos() -> None:
             package.update_package_index()
             available = package.get_available_packages()
             pkg = next(p for p in available if p.from_code == "en" and p.to_code == TARGET_LANG)
-            package.install_from_path(pkg.download_url)
+            package.install_from_path(pkg.download)
             installed_languages = translate.get_installed_languages()
             from_lang = next(l for l in installed_languages if l.code == "en")
             to_lang = next(l for l in installed_languages if l.code == TARGET_LANG)
