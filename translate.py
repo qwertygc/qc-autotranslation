@@ -1,11 +1,12 @@
 """
 Universal translation script for PO and TS files with DeepL and Argostranslate fallback
 - Only translates entries with EMPTY target strings (msgstr="" or <translation></translation>)
+- Automatically adds standard PO headers to ensure compatibility with Poedit
 
 USAGE:
 1. pip install requests polib beautifulsoup4 tqdm argostranslate
 2. For Argostranslate: run once `argospm install translate-en_<LANG>` https://www.argosopentech.com/argospm/index/
-3. Run: python translate.py --lang en
+3. Run: python translate.py --lang fr
 """
 
 import argparse
@@ -85,6 +86,54 @@ def translate_text(text: str) -> str:
         return text
 
 # ======================
+# PO FILE HEADERS
+# ======================
+def add_po_headers(po: polib.POFile, lang: str) -> None:
+    """Add standard PO headers to ensure Poedit compatibility"""
+    # Check if the header entry already exists
+    header_entry = None
+    for entry in po:
+        if not entry.msgid:  # Header entry has empty msgid
+            header_entry = entry
+            break
+
+    if header_entry is None:
+        # Create a new header entry
+        header_entry = polib.POEntry(
+            msgid="",
+            msgstr="",
+            comment="",
+            tcomment="",
+            occurrences=[],
+            flags=[],
+        )
+        po.insert(0, header_entry)
+
+    # Add or update header fields
+    header_entry.msgstr = ""
+    header_entry.comment = f"Language: {lang}\n"
+
+    # Ensure these fields are present in the header
+    header_fields = {
+        "Project-Id-Version": "PACKAGE VERSION",
+        "POT-Creation-Date": time.strftime("%Y-%m-%d %H:%M%z"),
+        "PO-Revision-Date": "YEAR-MO-DA HO:MI+ZONE",
+        "Last-Translator": f"Auto-translated via Argostranslate (EN -> {lang.upper()})",
+        "Language-Team": f"{lang.upper()} <LL@li.org>",
+        "Language": lang,
+        "MIME-Version": "1.0",
+        "Content-Type": "text/plain; charset=UTF-8",
+        "X-Generator": "Argostranslate + Custom Script",
+    }
+
+    # Build the msgstr with all header fields
+    header_lines = []
+    for key, value in header_fields.items():
+        header_lines.append(f"{key}: {value}")
+
+    header_entry.msgstr = "\n".join(header_lines) + "\n"
+
+# ======================
 # PO FILE PROCESSING
 # ======================
 def process_po_file() -> int:
@@ -128,10 +177,14 @@ def process_po_file() -> int:
                     translated_count += 1
                 time.sleep(SLEEP_TIME)
 
-    # Save with proper formatting
+    # Create a new PO file with processed entries
     new_po = polib.POFile()
     for entry in seen.values():
         new_po.append(entry)
+
+    # Add headers to ensure Poedit compatibility
+    add_po_headers(new_po, TARGET_LANG)
+
     new_po.save(str(PO_OUTPUT))
 
     if duplicates_merged:
