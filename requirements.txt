@@ -4,3 +4,4 @@ beautifulsoup4
 tqdm
 argostranslate
 lxml
+deepL

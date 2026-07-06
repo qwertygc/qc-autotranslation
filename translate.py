@@ -1,16 +1,20 @@
 """
-Universal translation script for PO and TS files with DeepL and Argostranslate fallback
+Universal translation script for PO and TS files with DeepL and Argostranslate support
 - Only translates entries with EMPTY target strings (msgstr="" or <translation></translation>)
 - Automatically adds standard PO headers to ensure compatibility with Poedit
+- Configuration via config.ini file
 
 USAGE:
-1. pip install requests polib beautifulsoup4 tqdm argostranslate
+1. pip install -r requirements.txt
 2. For Argostranslate: run once `argospm install translate-en_<LANG>` https://www.argosopentech.com/argospm/index/
-3. Run: python translate.py --lang fr
+3. Configure config.ini with your provider (argostranslate or deepl) and deepl_key if needed
+4. Run: python translate.py --lang fr
 """
 
 import argparse
+import configparser
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -25,13 +29,15 @@ logging.getLogger("argostranslate").setLevel(logging.ERROR)
 # ======================
 # CONFIGURATION
 # ======================
-parser = argparse.ArgumentParser(description='Translate PO/TS files using Argostranslate')
+parser = argparse.ArgumentParser(description='Translate PO/TS files using configured provider')
 parser.add_argument('--lang', required=True, help='Target language code (e.g., fr, es, fa)')
 parser.add_argument('--sleep', type=float, default=0.2, help='Delay between translations (seconds)')
+parser.add_argument('--config', default='config.ini', help='Path to configuration file (default: config.ini)')
 args = parser.parse_args()
 
 TARGET_LANG = args.lang
 SLEEP_TIME = args.sleep
+CONFIG_PATH = args.config
 BASE_DIR = Path.cwd()
 
 # File paths
@@ -40,11 +46,30 @@ PO_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.po"
 TS_INPUT = BASE_DIR / f"{TARGET_LANG}.ts"
 TS_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.ts"
 
+# Load configuration
+config = configparser.ConfigParser()
+config.read(CONFIG_PATH)
+
+# Get configuration values with proper handling of empty strings
+PROVIDER = config.get('translation', 'provider', fallback='argostranslate').strip().lower()
+DEEPL_KEY = config.get('translation', 'deepl_key', fallback='').strip()
+DEEPL_ENDPOINT = config.get('translation', 'deepl_endpoint', fallback='https://api-free.deepl.com/v2/translate').strip()
+
 # ======================
-# ARGOSTRANSLATE SETUP
+# PROVIDER INITIALIZATION
 # ======================
 argos_from_lang = None
 argos_to_lang = None
+deepL_translator = None
+
+def init_provider() -> None:
+    """Initialize the selected translation provider"""
+    global argos_from_lang, argos_to_lang, deepL_translator
+    
+    if PROVIDER == 'deepl':
+        init_deepl()
+    else:
+        init_argos()
 
 def init_argos() -> None:
     """Initialize Argostranslate with EN -> TARGET_LANG"""
@@ -61,28 +86,54 @@ def init_argos() -> None:
             package.update_package_index()
             available = package.get_available_packages()
             pkg = next(p for p in available if p.from_code == "en" and p.to_code == TARGET_LANG)
-            package.install_from_path(pkg.download)
+            # Use install_package_for_language_pair which handles the download automatically
+            package.install_package_for_language_pair("en", TARGET_LANG)
+            # Reload installed languages
             installed_languages = translate.get_installed_languages()
             from_lang = next(l for l in installed_languages if l.code == "en")
             to_lang = next(l for l in installed_languages if l.code == TARGET_LANG)
 
         argos_from_lang, argos_to_lang = from_lang, to_lang
-        print(f"✓ Argostranslate ready (EN -> {TARGET_LANG.upper()})")
+        print(f"\u2713 Argostranslate ready (EN -> {TARGET_LANG.upper()})")
     except Exception as e:
-        print(f"✗ Argostranslate init failed: {e}")
+        print(f"\u2717 Argostranslate init failed: {e}")
+        exit(1)
+
+def init_deepl() -> None:
+    """Initialize DeepL translator"""
+    global deepL_translator
+    if not DEEPL_KEY or DEEPL_KEY == 'None' or DEEPL_KEY == '':
+        print("\u2717 DeepL API key is required in config.ini")
+        exit(1)
+    
+    try:
+        import deepl
+        deepL_translator = deepl.Translator(DEEPL_KEY)
+        print(f"\u2713 DeepL ready (EN -> {TARGET_LANG.upper()})")
+    except deepl.exceptions.AuthorizationException:
+        print("\u2717 DeepL API key is invalid")
+        exit(1)
+    except Exception as e:
+        print(f"\u2717 DeepL init failed: {e}")
         exit(1)
 
 # ======================
 # TRANSLATION
 # ======================
 def translate_text(text: str) -> str:
-    """Translate text using Argostranslate"""
+    """Translate text using the configured provider"""
     if not text or not text.strip():
         return text
+    
     try:
-        from argostranslate import translate
-        return argos_from_lang.get_translation(argos_to_lang).translate(text)
-    except Exception:
+        if PROVIDER == 'deepl':
+            result = deepL_translator.translate_text(text, target_lang=TARGET_LANG)
+            return result.text
+        else:
+            from argostranslate import translate
+            return argos_from_lang.get_translation(argos_to_lang).translate(text)
+    except Exception as e:
+        print(f"\u26A0 Translation error: {e}")
         return text
 
 # ======================
@@ -111,16 +162,17 @@ def add_po_headers(po: polib.POFile, lang: str) -> None:
 
     # Add or update header fields
     # Ensure these fields are present in the header
+    provider_name = "DeepL" if PROVIDER == 'deepl' else "Argostranslate"
     header_fields = {
         "Project-Id-Version": "PACKAGE VERSION",
         "POT-Creation-Date": time.strftime("%Y-%m-%d %H:%M%z"),
         "PO-Revision-Date": "YEAR-MO-DA HO:MI+ZONE",
-        "Last-Translator": f"Auto-translated via Argostranslate (EN -> {lang.upper()})",
+        "Last-Translator": f"Auto-translated via {provider_name} (EN -> {lang.upper()})",
         "Language-Team": f"{lang.upper()} <LL@li.org>",
         "Language": lang,
         "MIME-Version": "1.0",
         "Content-Type": "text/plain; charset=UTF-8",
-        "X-Generator": "Argostranslate + Custom Script",
+        "X-Generator": f"{provider_name} + Custom Script",
     }
 
     # Build the msgstr with all header fields
@@ -145,7 +197,7 @@ def process_po_file() -> int:
 
     # First pass: clean and deduplicate
     for entry in po:
-        # Normaliser msgid (supprimer \n inutiles en début/fin)
+        # Normaliser msgid (supprimer \n inutiles en d	but/fin)
         if entry.msgid:
             entry.msgid = entry.msgid.strip()
 
@@ -185,8 +237,8 @@ def process_po_file() -> int:
     new_po.save(str(PO_OUTPUT))
 
     if duplicates_merged:
-        print(f"  ✓ Merged {duplicates_merged} duplicates")
-    print(f"  ✓ Translated {translated_count} empty strings (marked as fuzzy) -> {PO_OUTPUT.name}")
+        print(f"  \u2713 Merged {duplicates_merged} duplicates")
+    print(f"  \u2713 Translated {translated_count} empty strings (marked as fuzzy) -> {PO_OUTPUT.name}")
     return translated_count
 
 # ======================
@@ -220,19 +272,19 @@ def process_ts_file() -> int:
     with open(TS_OUTPUT, 'w', encoding='utf-8') as f:
         f.write(str(soup))
 
-    print(f"  ✓ Translated {translated_count} empty strings (marked as unfinished) -> {TS_OUTPUT.name}")
+    print(f"  \u2713 Translated {translated_count} empty strings (marked as unfinished) -> {TS_OUTPUT.name}")
     return translated_count
 
 # ======================
 # MAIN
 # ======================
 def main() -> None:
-    print(f"\nTranslating empty strings to {TARGET_LANG.upper()} via Argostranslate")
+    print(f"\nTranslating empty strings to {TARGET_LANG.upper()} via {PROVIDER.upper()}")
     print("-" * 50)
 
-    init_argos()
+    init_provider()
     total = process_po_file() + process_ts_file()
-    print(f"\n✓ Done! {total} empty strings translated and marked for review.")
+    print(f"\n\u2713 Done! {total} empty strings translated and marked for review.")
 
 if __name__ == "__main__":
     main()
