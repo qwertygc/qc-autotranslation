@@ -1,6 +1,6 @@
 """
 Universal translation script for PO and TS files with DeepL and Argostranslate support
-- Only translates entries with EMPTY target strings (msgstr="" or <translation></translation>)
+- Translates entries with EMPTY target strings OR non-validated translations (fuzzy/unfinished)
 - Automatically adds standard PO headers to ensure compatibility with Poedit
 - Configuration via config.ini file
 
@@ -9,6 +9,7 @@ USAGE:
 2. For Argostranslate: run once `argospm install translate-en_<LANG>` https://www.argosopentech.com/argospm/index/
 3. Configure config.ini with your provider (argostranslate or deepl) and deepl_key if needed
 4. Run: python translate.py --lang fr
+   Add --retranslate to force re-translation of ALL entries
 """
 
 import argparse
@@ -33,11 +34,13 @@ parser = argparse.ArgumentParser(description='Translate PO/TS files using config
 parser.add_argument('--lang', required=True, help='Target language code (e.g., fr, es, fa)')
 parser.add_argument('--sleep', type=float, default=0.2, help='Delay between translations (seconds)')
 parser.add_argument('--config', default='config.ini', help='Path to configuration file (default: config.ini)')
+parser.add_argument('--retranslate', action='store_true', help='Re-translate ALL entries (including validated ones)')
 args = parser.parse_args()
 
 TARGET_LANG = args.lang
 SLEEP_TIME = args.sleep
 CONFIG_PATH = args.config
+RETRANSLATE_ALL = args.retranslate
 BASE_DIR = Path.cwd()
 
 # File paths
@@ -136,6 +139,21 @@ def translate_text(text: str) -> str:
         print(f"\u26A0 Translation error: {e}")
         return text
 
+def should_translate_entry(entry) -> bool:
+    """Check if an entry should be (re)translated"""
+    if RETRANSLATE_ALL:
+        return bool(entry.msgid and entry.msgid.strip())
+    
+    # Translate if empty
+    if not entry.msgstr or not entry.msgstr.strip():
+        return bool(entry.msgid and entry.msgid.strip())
+    
+    # Re-translate if fuzzy (non-validated)
+    if "fuzzy" in entry.flags:
+        return bool(entry.msgid and entry.msgid.strip())
+    
+    return False
+
 # ======================
 # PO FILE HEADERS
 # ======================
@@ -186,7 +204,7 @@ def add_po_headers(po: polib.POFile, lang: str) -> None:
 # PO FILE PROCESSING
 # ======================
 def process_po_file() -> int:
-    """Clean, deduplicate, and translate empty strings in PO file"""
+    """Clean, deduplicate, and translate empty or non-validated strings in PO file"""
     if not PO_INPUT.exists():
         return 0
 
@@ -197,7 +215,7 @@ def process_po_file() -> int:
 
     # First pass: clean and deduplicate
     for entry in po:
-        # Normaliser msgid (supprimer \n inutiles en d	but/fin)
+        # Normaliser msgid (supprimer \n inutiles en d\tbut/fin)
         if entry.msgid:
             entry.msgid = entry.msgid.strip()
 
@@ -214,15 +232,17 @@ def process_po_file() -> int:
         else:
             seen[entry.msgid] = entry
 
-    # Second pass: translate empty strings
+    # Second pass: translate empty or non-validated strings
     for entry in tqdm(seen.values(), desc=f"Processing {PO_INPUT.name}"):
-        if entry.msgstr == "" and entry.msgid:
+        if entry.msgid and should_translate_entry(entry):
             text = entry.msgid
             if text:
                 new_translation = translate_text(text)
                 if new_translation and new_translation != text:
                     entry.msgstr = new_translation
-                    entry.flags.append("fuzzy")
+                    # Ensure fuzzy flag is set (but don't duplicate it)
+                    if "fuzzy" not in entry.flags:
+                        entry.flags.append("fuzzy")
                     translated_count += 1
                 time.sleep(SLEEP_TIME)
 
@@ -238,14 +258,14 @@ def process_po_file() -> int:
 
     if duplicates_merged:
         print(f"  \u2713 Merged {duplicates_merged} duplicates")
-    print(f"  \u2713 Translated {translated_count} empty strings (marked as fuzzy) -> {PO_OUTPUT.name}")
+    print(f"  \u2713 Translated {translated_count} strings (marked as fuzzy) -> {PO_OUTPUT.name}")
     return translated_count
 
 # ======================
 # TS FILE PROCESSING
 # ======================
 def process_ts_file() -> int:
-    """Translate empty <translation> tags in TS file"""
+    """Translate empty or non-validated <translation> tags in TS file"""
     if not TS_INPUT.exists():
         return 0
 
@@ -259,32 +279,50 @@ def process_ts_file() -> int:
         source = message.find('source')
         translation = message.find('translation')
 
-        if source and translation and (not translation.string or not translation.string.strip()):
-            text = source.string
-            if text and text.strip():
-                new_translation = translate_text(text.strip())
-                if new_translation and new_translation != text.strip():
-                    translation.string = new_translation
-                    message['type'] = 'unfinished'  # <-- MARQUE COMME UNFINISHED
-                    translated_count += 1
-                time.sleep(SLEEP_TIME)
+        if source and translation:
+            source_text = source.string
+            translation_text = translation.string if translation.string else ""
+            
+            # Check if we should (re)translate this entry
+            should_translate = False
+            
+            if RETRANSLATE_ALL:
+                should_translate = bool(source_text and source_text.strip())
+            else:
+                # Translate if empty
+                if not translation_text or not translation_text.strip():
+                    should_translate = bool(source_text and source_text.strip())
+                # Re-translate if unfinished (non-validated)
+                elif message.get('type') == 'unfinished':
+                    should_translate = bool(source_text and source_text.strip())
+            
+            if should_translate:
+                text = source_text.strip()
+                if text:
+                    new_translation = translate_text(text)
+                    if new_translation and new_translation != text:
+                        translation.string = new_translation
+                        message['type'] = 'unfinished'  # <-- MARQUE COMME UNFINISHED
+                        translated_count += 1
+                    time.sleep(SLEEP_TIME)
 
     with open(TS_OUTPUT, 'w', encoding='utf-8') as f:
         f.write(str(soup))
 
-    print(f"  \u2713 Translated {translated_count} empty strings (marked as unfinished) -> {TS_OUTPUT.name}")
+    print(f"  \u2713 Translated {translated_count} strings (marked as unfinished) -> {TS_OUTPUT.name}")
     return translated_count
 
 # ======================
 # MAIN
 # ======================
 def main() -> None:
-    print(f"\nTranslating empty strings to {TARGET_LANG.upper()} via {PROVIDER.upper()}")
+    mode_description = "ALL entries" if RETRANSLATE_ALL else "empty and non-validated entries"
+    print(f"\nTranslating {mode_description} to {TARGET_LANG.upper()} via {PROVIDER.upper()}")
     print("-" * 50)
 
     init_provider()
     total = process_po_file() + process_ts_file()
-    print(f"\n\u2713 Done! {total} empty strings translated and marked for review.")
+    print(f"\n\u2713 Done! {total} strings translated and marked for review.")
 
 if __name__ == "__main__":
     main()
