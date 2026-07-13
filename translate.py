@@ -68,7 +68,7 @@ deepL_translator = None
 def init_provider() -> None:
     """Initialize the selected translation provider"""
     global argos_from_lang, argos_to_lang, deepL_translator
-    
+
     if PROVIDER == 'deepl':
         init_deepl()
     else:
@@ -108,7 +108,7 @@ def init_deepl() -> None:
     if not DEEPL_KEY or DEEPL_KEY == 'None' or DEEPL_KEY == '':
         print("\u2717 DeepL API key is required in config.ini")
         exit(1)
-    
+
     try:
         import deepl
         deepL_translator = deepl.Translator(DEEPL_KEY)
@@ -127,7 +127,7 @@ def translate_text(text: str) -> str:
     """Translate text using the configured provider"""
     if not text or not text.strip():
         return text
-    
+
     try:
         if PROVIDER == 'deepl':
             result = deepL_translator.translate_text(text, target_lang=TARGET_LANG)
@@ -143,62 +143,16 @@ def should_translate_entry(entry) -> bool:
     """Check if an entry should be (re)translated"""
     if RETRANSLATE_ALL:
         return bool(entry.msgid and entry.msgid.strip())
-    
+
     # Translate if empty
     if not entry.msgstr or not entry.msgstr.strip():
         return bool(entry.msgid and entry.msgid.strip())
-    
+
     # Re-translate if fuzzy (non-validated)
     if "fuzzy" in entry.flags:
         return bool(entry.msgid and entry.msgid.strip())
-    
+
     return False
-
-# ======================
-# PO FILE HEADERS
-# ======================
-def add_po_headers(po: polib.POFile, lang: str) -> None:
-    """Add standard PO headers to ensure Poedit compatibility"""
-    # Check if the header entry already exists
-    header_entry = None
-    for entry in po:
-        if not entry.msgid:  # Header entry has empty msgid
-            header_entry = entry
-            break
-
-    if header_entry is None:
-        # Create a new header entry
-        header_entry = polib.POEntry(
-            msgid="",
-            msgstr="",
-            comment="",
-            tcomment="",
-            occurrences=[],
-            flags=[],
-        )
-        po.insert(0, header_entry)
-
-    # Add or update header fields
-    # Ensure these fields are present in the header
-    provider_name = "DeepL" if PROVIDER == 'deepl' else "Argostranslate"
-    header_fields = {
-        "Project-Id-Version": "PACKAGE VERSION",
-        "POT-Creation-Date": time.strftime("%Y-%m-%d %H:%M%z"),
-        "PO-Revision-Date": "YEAR-MO-DA HO:MI+ZONE",
-        "Last-Translator": f"Auto-translated via {provider_name} (EN -> {lang.upper()})",
-        "Language-Team": f"{lang.upper()} <LL@li.org>",
-        "Language": lang,
-        "MIME-Version": "1.0",
-        "Content-Type": "text/plain; charset=UTF-8",
-        "X-Generator": f"{provider_name} + Custom Script",
-    }
-
-    # Build the msgstr with all header fields
-    header_lines = []
-    for key, value in header_fields.items():
-        header_lines.append(f"{key}: {value}")
-
-    header_entry.msgstr = "\n".join(header_lines) + "\n"
 
 # ======================
 # PO FILE PROCESSING
@@ -210,32 +164,63 @@ def process_po_file() -> int:
 
     po = polib.pofile(str(PO_INPUT))
     translated_count = 0
-    seen = {}
     duplicates_merged = 0
 
-    # First pass: clean and deduplicate
+    # Separate header entry from regular entries
+    regular_entries = []
+
     for entry in po:
-        # Normaliser msgid (supprimer \n inutiles en d\tbut/fin)
-        if entry.msgid:
-            entry.msgid = entry.msgid.strip()
+        if entry.msgid == "":
+            # Skip header entry - we'll recreate it properly
+            continue
+        regular_entries.append(entry)
 
-        # Normaliser msgstr (supprimer \n inutiles)
-        if entry.msgstr:
-            entry.msgstr = entry.msgstr.strip()
+    # Process regular entries for deduplication
+    seen = {}
+    for entry in regular_entries:
+        # For msgid, we need to preserve the exact string including newlines
+        # but strip leading/trailing whitespace for deduplication key
+        original_msgid = entry.msgid
 
-        # Handle duplicates
-        if entry.msgid in seen:
-            existing = seen[entry.msgid]
-            if not existing.msgstr and entry.msgstr:
-                existing.msgstr = entry.msgstr
+        # Create a normalized key for deduplication (strip whitespace)
+        if original_msgid:
+            norm_key = original_msgid.strip()
+        else:
+            norm_key = original_msgid
+
+        # Keep the original msgid as-is (preserve formatting)
+        cleaned_msgid = original_msgid
+
+        # For msgstr, preserve the original as-is
+        cleaned_msgstr = entry.msgstr
+
+        # Handle duplicates - use the first occurrence and merge translations
+        if norm_key in seen:
+            existing = seen[norm_key]
+            # If existing has no translation but current does, use current
+            if not existing.msgstr and cleaned_msgstr:
+                existing.msgstr = cleaned_msgstr
+                existing.flags = entry.flags.copy()
+                existing.occurrences = entry.occurrences.copy()
             duplicates_merged += 1
         else:
-            seen[entry.msgid] = entry
+            # Create a new entry with original values (preserving formatting)
+            new_entry = polib.POEntry(
+                msgid=cleaned_msgid,
+                msgstr=cleaned_msgstr,
+                comment=entry.comment,
+                tcomment=entry.tcomment,
+                occurrences=entry.occurrences.copy(),
+                flags=entry.flags.copy(),
+            )
+            seen[norm_key] = new_entry
 
     # Second pass: translate empty or non-validated strings
-    for entry in tqdm(seen.values(), desc=f"Processing {PO_INPUT.name}"):
+    entries_to_process = list(seen.values())
+    for entry in tqdm(entries_to_process, desc=f"Processing {PO_INPUT.name}"):
         if entry.msgid and should_translate_entry(entry):
-            text = entry.msgid
+            # For translation, use the stripped msgid
+            text = entry.msgid.strip() if entry.msgid else ""
             if text:
                 new_translation = translate_text(text)
                 if new_translation and new_translation != text:
@@ -248,11 +233,24 @@ def process_po_file() -> int:
 
     # Create a new PO file with processed entries
     new_po = polib.POFile()
-    for entry in seen.values():
-        new_po.append(entry)
 
-    # Add headers to ensure Poedit compatibility
-    add_po_headers(new_po, TARGET_LANG)
+    # Set metadata - this will create a proper header entry
+    provider_name = "DeepL" if PROVIDER == 'deepl' else "Argostranslate"
+    new_po.metadata = {
+        "Project-Id-Version": "PACKAGE VERSION",
+        "POT-Creation-Date": time.strftime("%Y-%m-%d %H:%M%z"),
+        "PO-Revision-Date": time.strftime("%Y-%m-%d %H:%M%z"),
+        "Last-Translator": f"Auto-translated via {provider_name} (EN -> {TARGET_LANG.upper()})",
+        "Language-Team": f"{TARGET_LANG.upper()} <LL@li.org>",
+        "Language": TARGET_LANG,
+        "MIME-Version": "1.0",
+        "Content-Type": "text/plain; charset=UTF-8",
+        "X-Generator": f"{provider_name} + Custom Script",
+    }
+
+    # Add all processed entries
+    for entry in entries_to_process:
+        new_po.append(entry)
 
     new_po.save(str(PO_OUTPUT))
 
@@ -282,10 +280,10 @@ def process_ts_file() -> int:
         if source and translation:
             source_text = source.string
             translation_text = translation.string if translation.string else ""
-            
+
             # Check if we should (re)translate this entry
             should_translate = False
-            
+
             if RETRANSLATE_ALL:
                 should_translate = bool(source_text and source_text.strip())
             else:
@@ -295,7 +293,7 @@ def process_ts_file() -> int:
                 # Re-translate if unfinished (non-validated)
                 elif message.get('type') == 'unfinished':
                     should_translate = bool(source_text and source_text.strip())
-            
+
             if should_translate:
                 text = source_text.strip()
                 if text:
