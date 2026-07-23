@@ -10,6 +10,7 @@ USAGE:
 3. Configure config.ini with your provider (argostranslate, deepl, or lindat) and deepl_key if needed
 4. Run: python translate.py --lang fr
    Add --retranslate to force re-translation of ALL entries
+   Add --skip-fuzzy to skip entries already marked as fuzzy
 """
 
 import argparse
@@ -35,12 +36,14 @@ parser.add_argument('--lang', required=True, help='Target language code (e.g., f
 parser.add_argument('--sleep', type=float, default=0.2, help='Delay between translations (seconds)')
 parser.add_argument('--config', default='config.ini', help='Path to configuration file (default: config.ini)')
 parser.add_argument('--retranslate', action='store_true', help='Re-translate ALL entries (including validated ones)')
+parser.add_argument('--skip-fuzzy', action='store_true', help='Skip entries already marked as fuzzy')
 args = parser.parse_args()
 
 TARGET_LANG = args.lang
 SLEEP_TIME = args.sleep
 CONFIG_PATH = args.config
 RETRANSLATE_ALL = args.retranslate
+SKIP_FUZZY = args.skip_fuzzy
 BASE_DIR = Path.cwd()
 
 # File paths
@@ -183,7 +186,10 @@ def translate_with_lindat(text: str) -> str:
     try:
         response = lindat_session.post(url, data={'input_text': text}, timeout=30)
         response.raise_for_status()
-        return response.text
+        # Strip whitespace and newlines from response
+        result = response.text.strip()
+        # Ensure proper UTF-8 encoding
+        return result.encode('utf-8', 'ignore').decode('utf-8')
     except requests.exceptions.RequestException as e:
         # Try with source and target parameters as fallback
         try:
@@ -194,7 +200,8 @@ def translate_with_lindat(text: str) -> str:
                 'tgt': TARGET_LANG
             }, timeout=30)
             response.raise_for_status()
-            return response.text
+            result = response.text.strip()
+            return result.encode('utf-8', 'ignore').decode('utf-8')
         except requests.exceptions.RequestException as e2:
             print(f"\u26A0 LINDAT translation error: {e2}")
             return text
@@ -203,6 +210,10 @@ def should_translate_entry(entry) -> bool:
     """Check if an entry should be (re)translated"""
     if RETRANSLATE_ALL:
         return bool(entry.msgid and entry.msgid.strip())
+
+    # Skip if entry is marked as fuzzy and we want to skip fuzzy entries
+    if SKIP_FUZZY and "fuzzy" in entry.flags:
+        return False
 
     # Translate if empty
     if not entry.msgstr or not entry.msgstr.strip():
@@ -346,6 +357,9 @@ def process_ts_file() -> int:
 
             if RETRANSLATE_ALL:
                 should_translate = bool(source_text and source_text.strip())
+            elif SKIP_FUZZY and message.get('type') == 'unfinished':
+                # Skip if we want to skip unfinished entries
+                should_translate = False
             else:
                 # Translate if empty
                 if not translation_text or not translation_text.strip():
