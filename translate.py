@@ -1,5 +1,5 @@
 """
-Universal translation script for PO and TS files with DeepL, Argostranslate, and LINDAT support
+Universal translation script for PO and TS files with DeepL, Argostranslate, LINDAT, and Apertium support
 - Translates entries with EMPTY target strings OR non-validated translations (fuzzy/unfinished)
 - Automatically adds standard PO headers to ensure compatibility with Poedit
 - Configuration via config.ini file
@@ -7,7 +7,7 @@ Universal translation script for PO and TS files with DeepL, Argostranslate, and
 USAGE:
 1. pip install -r requirements.txt
 2. For Argostranslate: run once `argospm install translate-en_<LANG>` https://www.argosopentech.com/argospm/index/
-3. Configure config.ini with your provider (argostranslate, deepl, or lindat) and deepl_key if needed
+3. Configure config.ini with your provider (argostranslate, deepl, lindat, or apertium) and deepl_key if needed
 4. Run: python translate.py --lang fr
    Add --retranslate to force re-translation of ALL entries
    Add --skip-fuzzy to skip entries already marked as fuzzy
@@ -61,6 +61,24 @@ PROVIDER = config.get('translation', 'provider', fallback='argostranslate').stri
 DEEPL_KEY = config.get('translation', 'deepl_key', fallback='').strip()
 DEEPL_ENDPOINT = config.get('translation', 'deepl_endpoint', fallback='https://api-free.deepl.com/v2/translate').strip()
 LINDAT_ENDPOINT = config.get('translation', 'lindat_endpoint', fallback='https://lindat.mff.cuni.cz/services/translation/api/v2').strip()
+APERTIUM_ENDPOINT = config.get('translation', 'apertium_endpoint', fallback='https://apertium.org/apy/translate').strip()
+
+# ======================
+# LANGUAGE CODE MAPPING
+# ======================
+# Apertium uses 3-letter language codes, we need to map 2-letter codes
+LANG_CODE_MAP = {
+    'en': 'eng', 'es': 'spa', 'fr': 'fra', 'de': 'deu', 'it': 'ita', 'pt': 'por',
+    'ca': 'cat', 'ru': 'rus', 'nl': 'nld', 'sv': 'swe', 'da': 'dan', 'no': 'nob',
+    'pl': 'pol', 'uk': 'ukr', 'ro': 'ron', 'bg': 'bul', 'hr': 'hrv', 'sl': 'slv',
+    'cs': 'ces', 'sk': 'slk', 'hu': 'hun', 'fi': 'fin', 'et': 'est', 'lv': 'lav',
+    'lt': 'lit', 'el': 'ell', 'tr': 'tur', 'ar': 'ara', 'he': 'heb', 'hi': 'hin',
+    'bn': 'ben', 'ja': 'jpn', 'ko': 'kor', 'zh': 'zho', 'th': 'tha', 'vi': 'vie'
+}
+
+def get_apertium_lang_code(lang_2letter: str) -> str:
+    """Convert 2-letter language code to 3-letter Apertium code"""
+    return LANG_CODE_MAP.get(lang_2letter.lower(), lang_2letter)
 
 # ======================
 # PROVIDER INITIALIZATION
@@ -69,15 +87,18 @@ argos_from_lang = None
 argos_to_lang = None
 deepL_translator = None
 lindat_session = None
+apertium_session = None
 
 def init_provider() -> None:
     """Initialize the selected translation provider"""
-    global argos_from_lang, argos_to_lang, deepL_translator, lindat_session
+    global argos_from_lang, argos_to_lang, deepL_translator, lindat_session, apertium_session
 
     if PROVIDER == 'deepl':
         init_deepl()
     elif PROVIDER == 'lindat':
         init_lindat()
+    elif PROVIDER == 'apertium':
+        init_apertium()
     else:
         init_argos()
 
@@ -155,6 +176,35 @@ def init_lindat() -> None:
         print(f"\u2717 LINDAT init failed: {e}")
         exit(1)
 
+def init_apertium() -> None:
+    """Initialize Apertium translation service"""
+    global apertium_session
+    try:
+        import requests
+        apertium_session = requests.Session()
+
+        # Test the connection by listing available pairs
+        list_url = "https://apertium.org/apy/listPairs"
+        response = apertium_session.get(list_url, verify=False, timeout=10)
+
+        if response.status_code != 200:
+            print(f"\u2717 Apertium API connection failed with status {response.status_code}")
+            exit(1)
+
+        # Check if the pair for EN -> TARGET_LANG exists
+        source_3letter = get_apertium_lang_code('en')
+        target_3letter = get_apertium_lang_code(TARGET_LANG)
+        pair_exists = f'"sourceLanguage": "{source_3letter}", "targetLanguage": "{target_3letter}"' in response.text
+
+        if not pair_exists:
+            print(f"\u26A0 Warning: Language pair {source_3letter}-{target_3letter} may not be available on Apertium")
+            print(f"   You can check available pairs at: https://apertium.org/apy/listPairs")
+
+        print(f"\u2713 Apertium ready (EN -> {TARGET_LANG.upper()})")
+    except Exception as e:
+        print(f"\u2717 Apertium init failed: {e}")
+        exit(1)
+
 # ======================
 # TRANSLATION
 # ======================
@@ -169,6 +219,8 @@ def translate_text(text: str) -> str:
             return result.text
         elif PROVIDER == 'lindat':
             return translate_with_lindat(text)
+        elif PROVIDER == 'apertium':
+            return translate_with_apertium(text)
         else:
             from argostranslate import translate
             return argos_from_lang.get_translation(argos_to_lang).translate(text)
@@ -205,6 +257,40 @@ def translate_with_lindat(text: str) -> str:
         except requests.exceptions.RequestException as e2:
             print(f"\u26A0 LINDAT translation error: {e2}")
             return text
+
+def translate_with_apertium(text: str) -> str:
+    """Translate text using Apertium API"""
+    import requests
+    import json
+
+    source_3letter = get_apertium_lang_code('en')
+    target_3letter = get_apertium_lang_code(TARGET_LANG)
+    langpair = f"{source_3letter}|{target_3letter}"
+
+    url = APERTIUM_ENDPOINT
+
+    try:
+        response = apertium_session.get(url, params={
+            'langpair': langpair,
+            'q': text
+        }, verify=False, timeout=30)
+        response.raise_for_status()
+
+        # Parse JSON response
+        data = json.loads(response.text)
+        if data.get('responseStatus') == 200:
+            translated_text = data.get('responseData', {}).get('translatedText', text)
+            # Clean up the result
+            return translated_text.strip()
+        else:
+            print(f"\u26A0 Apertium API error: {data.get('message', 'Unknown error')}")
+            return text
+    except requests.exceptions.RequestException as e:
+        print(f"\u26A0 Apertium translation error: {e}")
+        return text
+    except json.JSONDecodeError as e:
+        print(f"\u26A0 Apertium JSON decode error: {e}")
+        return text
 
 def should_translate_entry(entry) -> bool:
     """Check if an entry should be (re)translated"""
@@ -306,7 +392,7 @@ def process_po_file() -> int:
     new_po = polib.POFile()
 
     # Set metadata - this will create a proper header entry
-    provider_name = "DeepL" if PROVIDER == 'deepl' else ("LINDAT" if PROVIDER == 'lindat' else "Argostranslate")
+    provider_name = "DeepL" if PROVIDER == 'deepl' else ("LINDAT" if PROVIDER == 'lindat' else ("Apertium" if PROVIDER == 'apertium' else "Argostranslate"))
     new_po.metadata = {
         "Project-Id-Version": "PACKAGE VERSION",
         "POT-Creation-Date": time.strftime("%Y-%m-%d %H:%M%z"),
