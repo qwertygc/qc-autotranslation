@@ -1,5 +1,5 @@
 """
-Universal translation script for PO and TS files with DeepL and Argostranslate support
+Universal translation script for PO and TS files with DeepL, Argostranslate, and LINDAT support
 - Translates entries with EMPTY target strings OR non-validated translations (fuzzy/unfinished)
 - Automatically adds standard PO headers to ensure compatibility with Poedit
 - Configuration via config.ini file
@@ -7,7 +7,7 @@ Universal translation script for PO and TS files with DeepL and Argostranslate s
 USAGE:
 1. pip install -r requirements.txt
 2. For Argostranslate: run once `argospm install translate-en_<LANG>` https://www.argosopentech.com/argospm/index/
-3. Configure config.ini with your provider (argostranslate or deepl) and deepl_key if needed
+3. Configure config.ini with your provider (argostranslate, deepl, or lindat) and deepl_key if needed
 4. Run: python translate.py --lang fr
    Add --retranslate to force re-translation of ALL entries
 """
@@ -57,6 +57,7 @@ config.read(CONFIG_PATH)
 PROVIDER = config.get('translation', 'provider', fallback='argostranslate').strip().lower()
 DEEPL_KEY = config.get('translation', 'deepl_key', fallback='').strip()
 DEEPL_ENDPOINT = config.get('translation', 'deepl_endpoint', fallback='https://api-free.deepl.com/v2/translate').strip()
+LINDAT_ENDPOINT = config.get('translation', 'lindat_endpoint', fallback='https://lindat.mff.cuni.cz/services/translation/api/v2').strip()
 
 # ======================
 # PROVIDER INITIALIZATION
@@ -64,13 +65,16 @@ DEEPL_ENDPOINT = config.get('translation', 'deepl_endpoint', fallback='https://a
 argos_from_lang = None
 argos_to_lang = None
 deepL_translator = None
+lindat_session = None
 
 def init_provider() -> None:
     """Initialize the selected translation provider"""
-    global argos_from_lang, argos_to_lang, deepL_translator
+    global argos_from_lang, argos_to_lang, deepL_translator, lindat_session
 
     if PROVIDER == 'deepl':
         init_deepl()
+    elif PROVIDER == 'lindat':
+        init_lindat()
     else:
         init_argos()
 
@@ -120,6 +124,34 @@ def init_deepl() -> None:
         print(f"\u2717 DeepL init failed: {e}")
         exit(1)
 
+def init_lindat() -> None:
+    """Initialize LINDAT translation service"""
+    global lindat_session
+    try:
+        import requests
+        lindat_session = requests.Session()
+
+        # Test the connection by getting available models
+        models_url = f"{LINDAT_ENDPOINT}/models/"
+        response = lindat_session.get(models_url)
+
+        if response.status_code != 200:
+            print(f"\u2717 LINDAT API connection failed with status {response.status_code}")
+            exit(1)
+
+        # Check if the model for EN -> TARGET_LANG exists
+        model_name = f"en-{TARGET_LANG}"
+        model_exists = model_name in response.text
+
+        if not model_exists:
+            print(f"\u26A0 Warning: Model {model_name} may not be available on LINDAT")
+            print(f"   Available models: {response.text[:500]}...")
+
+        print(f"\u2713 LINDAT ready (EN -> {TARGET_LANG.upper()})")
+    except Exception as e:
+        print(f"\u2717 LINDAT init failed: {e}")
+        exit(1)
+
 # ======================
 # TRANSLATION
 # ======================
@@ -132,12 +164,40 @@ def translate_text(text: str) -> str:
         if PROVIDER == 'deepl':
             result = deepL_translator.translate_text(text, target_lang=TARGET_LANG)
             return result.text
+        elif PROVIDER == 'lindat':
+            return translate_with_lindat(text)
         else:
             from argostranslate import translate
             return argos_from_lang.get_translation(argos_to_lang).translate(text)
     except Exception as e:
         print(f"\u26A0 Translation error: {e}")
         return text
+
+def translate_with_lindat(text: str) -> str:
+    """Translate text using LINDAT API"""
+    import requests
+
+    model_name = f"en-{TARGET_LANG}"
+    url = f"{LINDAT_ENDPOINT}/models/{model_name}"
+
+    try:
+        response = lindat_session.post(url, data={'input_text': text}, timeout=30)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        # Try with source and target parameters as fallback
+        try:
+            url = f"{LINDAT_ENDPOINT}/languages/"
+            response = lindat_session.post(url, data={
+                'input_text': text,
+                'src': 'en',
+                'tgt': TARGET_LANG
+            }, timeout=30)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e2:
+            print(f"\u26A0 LINDAT translation error: {e2}")
+            return text
 
 def should_translate_entry(entry) -> bool:
     """Check if an entry should be (re)translated"""
@@ -235,7 +295,7 @@ def process_po_file() -> int:
     new_po = polib.POFile()
 
     # Set metadata - this will create a proper header entry
-    provider_name = "DeepL" if PROVIDER == 'deepl' else "Argostranslate"
+    provider_name = "DeepL" if PROVIDER == 'deepl' else ("LINDAT" if PROVIDER == 'lindat' else "Argostranslate")
     new_po.metadata = {
         "Project-Id-Version": "PACKAGE VERSION",
         "POT-Creation-Date": time.strftime("%Y-%m-%d %H:%M%z"),
