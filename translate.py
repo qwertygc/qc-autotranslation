@@ -502,3 +502,6 @@ def main() -> None:
         print("-" * 50)
         total = process_po_file() + process_ts_file()
         print(f"\n✓ Done! {total} strings translated and marked for review for {TARGET_LANG.upper()}.")
+
+if __name__ == "__main__":
+    main()
