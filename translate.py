@@ -32,7 +32,7 @@ logging.getLogger("argostranslate").setLevel(logging.ERROR)
 # CONFIGURATION
 # ======================
 parser = argparse.ArgumentParser(description='Translate PO/TS files using configured provider')
-parser.add_argument('--lang', required=True, help='Target language code (e.g., fr, es, fa)')
+parser.add_argument('--lang', default=None, help='Target language code (e.g., fr, es, fa). If not provided, all available languages in the directory will be processed.')
 parser.add_argument('--sleep', type=float, default=0.2, help='Delay between translations (seconds)')
 parser.add_argument('--config', default='config.ini', help='Path to configuration file (default: config.ini)')
 parser.add_argument('--retranslate', action='store_true', help='Re-translate ALL entries (including validated ones)')
@@ -498,7 +498,7 @@ def main() -> None:
         config.read(CONFIG_PATH)
         init_provider()
         mode_description = "ALL entries" if RETRANSLATE_ALL else "empty or unvalidated entries"
-        print(f"\Translation of {mode_description} to {TARGET_LANG.upper()} with {PROVIDER.upper()}")
+        print(f"Translation of {mode_description} to {TARGET_LANG.upper()} with {PROVIDER.upper()}")
         print("-" * 50)
         total = process_po_file() + process_ts_file()
         print(f"\n✓ Done! {total} strings translated and marked for review for {TARGET_LANG.upper()}.")
