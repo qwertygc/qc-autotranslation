@@ -32,6 +32,7 @@ logging.getLogger("argostranslate").setLevel(logging.ERROR)
 # CONFIGURATION
 # ======================
 parser = argparse.ArgumentParser(description='Translate PO/TS files using configured provider')
+parser.add_argument('--all', action='store_true', help='Process all available languages in the directory.')
 parser.add_argument('--lang', default=None, help='Target language code (e.g., fr, es, fa). If not provided, all available languages in the directory will be processed.')
 parser.add_argument('--sleep', type=float, default=0.2, help='Delay between translations (seconds)')
 parser.add_argument('--config', default='config.ini', help='Path to configuration file (default: config.ini)')
@@ -485,21 +486,52 @@ def process_ts_file() -> int:
 # MAIN
 # ======================
 def main() -> None:
-    available_languages = list_available_languages(BASE_DIR)
-    if not available_languages:
-        print("No language file (.po or .ts) found in the folder")
+    # If --all is used, ignore --lang and process all languages
+    if args.all:
+        available_languages = list_available_languages(BASE_DIR)
+        if not available_languages:
+            print("No language files (.po or .ts) found in the directory.")
+            return
+        print(f"Detected languages: {', '.join(available_languages)}")
+    elif args.lang:
+        available_languages = [args.lang]
+    else:
+        print("Please specify a language with --lang or use --all to process all languages.")
         return
 
-    print(f"Detected languages : {', '.join(available_languages)}")
+    # Check for conflicts between --all and --lang
+    if args.all and args.lang:
+        print("Error: --all and --lang cannot be used simultaneously. Use either --all or --lang.")
+        return
 
     for lang in available_languages:
-        global TARGET_LANG
+        global TARGET_LANG, PO_INPUT, PO_OUTPUT, TS_INPUT, TS_OUTPUT
         TARGET_LANG = lang
+
+        # Reload configuration for each language
         config.read(CONFIG_PATH)
+        PROVIDER = config.get('translation', 'provider', fallback='argostranslate').strip().lower()
+        DEEPL_KEY = config.get('translation', 'deepl_key', fallback='').strip()
+
+        # Recalculate file paths for the current language
+        PO_INPUT = BASE_DIR / f"{TARGET_LANG}.po"
+        PO_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.po"
+        TS_INPUT = BASE_DIR / f"{TARGET_LANG}.ts"
+        TS_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.ts"
+
+        # Check if files exist
+        if not PO_INPUT.exists() and not TS_INPUT.exists():
+            print(f"No .po or .ts file found for language {TARGET_LANG}")
+            continue
+
+        # Initialize the translation provider
         init_provider()
-        mode_description = "ALL entries" if RETRANSLATE_ALL else "empty or unvalidated entries"
-        print(f"Translation of {mode_description} to {TARGET_LANG.upper()} with {PROVIDER.upper()}")
+
+        # Process files
+        mode_description = "ALL entries" if RETRANSLATE_ALL else "empty and non-validated entries"
+        print(f"\nTranslating {mode_description} to {TARGET_LANG.upper()} with {PROVIDER.upper()}")
         print("-" * 50)
+
         total = process_po_file() + process_ts_file()
         print(f"\n✓ Done! {total} strings translated and marked for review for {TARGET_LANG.upper()}.")
 
