@@ -205,6 +205,17 @@ def init_apertium() -> None:
         print(f"\u2717 Apertium init failed: {e}")
         exit(1)
 
+def list_available_languages(directory: Path, extensions: list = [".po", ".ts"]) -> list:
+    """List all available language codes from files in the directory."""
+    languages = set()
+    for file in directory.glob("*"):
+        if file.suffix.lower() in extensions:
+            # Extraire le code de langue du nom de fichier (ex: fr.po → fr)
+            lang_code = file.stem.split("_")[0]  # Gère les cas comme fr.po ou fr_FR.po
+            if len(lang_code) == 2:  # Vérifie que c'est un code de langue valide (ex: fr, es)
+                languages.add(lang_code)
+    return sorted(languages)
+    
 # ======================
 # TRANSLATION
 # ======================
@@ -474,13 +485,20 @@ def process_ts_file() -> int:
 # MAIN
 # ======================
 def main() -> None:
-    mode_description = "ALL entries" if RETRANSLATE_ALL else "empty and non-validated entries"
-    print(f"\nTranslating {mode_description} to {TARGET_LANG.upper()} via {PROVIDER.upper()}")
-    print("-" * 50)
+    available_languages = list_available_languages(BASE_DIR)
+    if not available_languages:
+        print("No language file (.po or .ts) found in the folder")
+        return
 
-    init_provider()
-    total = process_po_file() + process_ts_file()
-    print(f"\n\u2713 Done! {total} strings translated and marked for review.")
+    print(f"Detected languages : {', '.join(available_languages)}")
 
-if __name__ == "__main__":
-    main()
+    for lang in available_languages:
+        global TARGET_LANG
+        TARGET_LANG = lang
+        config.read(CONFIG_PATH)
+        init_provider()
+        mode_description = "ALL entries" if RETRANSLATE_ALL else "empty or unvalidated entries"
+        print(f"\Translation of {mode_description} to {TARGET_LANG.upper()} with {PROVIDER.upper()}")
+        print("-" * 50)
+        total = process_po_file() + process_ts_file()
+        print(f"\n✓ Done! {total} strings translated and marked for review for {TARGET_LANG.upper()}.")
