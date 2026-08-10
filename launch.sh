@@ -16,7 +16,7 @@ echo "Installing requirements. This may take 10 minutes."
 python3 -m pip install --upgrade pip
 pip install -r requirements.txt
 
-echo "Starting SocioTranscribe."
+echo "Starting."
 python translate.py --lang fr
 
 # Exit environment
