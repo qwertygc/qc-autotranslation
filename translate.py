@@ -513,7 +513,7 @@ def main() -> None:
         PO_INPUT = BASE_DIR / f"{TARGET_LANG}.po"
         PO_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.po"
         TS_INPUT = BASE_DIR / f"{TARGET_LANG}.ts"
-        TS_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.po"
+        TS_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.ts"
 
         # Check if files exist
         if not PO_INPUT.exists() and not TS_INPUT.exists():
