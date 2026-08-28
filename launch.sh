@@ -17,7 +17,7 @@ python3 -m pip install --upgrade pip
 pip install -r requirements.txt
 
 echo "Starting."
-python translate.py --all
+python translate.py --all --skip-fuzzy
 
 # Exit environment
 cd ../
