@@ -47,12 +47,6 @@ RETRANSLATE_ALL = args.retranslate
 SKIP_FUZZY = args.skip_fuzzy
 BASE_DIR = Path.cwd()
 
-# File paths
-PO_INPUT = BASE_DIR / f"{TARGET_LANG}.po"
-PO_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.po"
-TS_INPUT = BASE_DIR / f"{TARGET_LANG}.ts"
-TS_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.ts"
-
 # Load configuration
 config = configparser.ConfigParser()
 config.read(CONFIG_PATH)
@@ -514,10 +508,12 @@ def main() -> None:
         DEEPL_KEY = config.get('translation', 'deepl_key', fallback='').strip()
 
         # Recalculate file paths for the current language
+        TRANSLATED_DIR = BASE_DIR / "translated"
+        TRANSLATED_DIR.mkdir(exist_ok=True)
         PO_INPUT = BASE_DIR / f"{TARGET_LANG}.po"
-        PO_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.po"
+        PO_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.po"
         TS_INPUT = BASE_DIR / f"{TARGET_LANG}.ts"
-        TS_OUTPUT = BASE_DIR / f"{TARGET_LANG}_translated.ts"
+        TS_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.po"
 
         # Check if files exist
         if not PO_INPUT.exists() and not TS_INPUT.exists():
