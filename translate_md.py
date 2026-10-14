@@ -226,129 +226,165 @@ def translate_with_apertium(text: str) -> str:
 # MARKDOWN PROCESSING
 # ======================
 
-class MarkdownProcessor:
-    """Process Markdown content, preserving structure while translating text"""
+PLACEHOLDER_START = '\ue000'
+PLACEHOLDER_END = '\ue001'
 
-    def __init__(self):
-        # Compile all patterns once
-        # Order matters: check for frontmatter first, then code blocks, then others
-        self.patterns = [
-            # Frontmatter YAML (between --- lines)
-            (re.compile(r'^---\s*[\r\n]+(.*?)[\r\n]+---\s*[\r\n]+', re.MULTILINE | re.DOTALL), 'FRONTMATTER'),
-            # Code blocks
-            (re.compile(r'```[\s\S]*?```'), 'CODE_BLOCK'),
-            # HTML tags
-            (re.compile(r'<[^>]+>'), 'HTML'),
-            # Horizontal rules
-            (re.compile(r'^(---|\*\*\*|___)\s*$', re.MULTILINE), 'HR'),
-            # Images
-            (re.compile(r'!\[([^\]]+)\]\(([^)]+)\)'), 'IMAGE'),
-            # Links
-            (re.compile(r'\[([^\]]+)\]\(([^)]+)\)'), 'LINK'),
-            # Headers (must be before inline code to avoid conflicts)
-            (re.compile(r'^(#{1,6})\s*(.*)', re.MULTILINE), 'HEADER'),
-            # Lists
-            (re.compile(r'^(\s*[-*+]|\d+\.)\s+(.*)', re.MULTILINE), 'LIST'),
-            # Blockquotes
-            (re.compile(r'^(\s*>\s*)(.*)', re.MULTILINE), 'BLOCKQUOTE'),
-            # Inline code (last to avoid conflicts with other patterns)
-            (re.compile(r'`([^`\n]+)`'), 'INLINE_CODE'),
-        ]
+
+class MarkdownProcessor:
+    """Process Markdown content line by line, preserving structure while translating text"""
+
+    FENCE_RE = re.compile(r'^(\s*)(`{3,}|~{3,}).*$')
+    TAB_RE = re.compile(r'^(\s*===\s+)"([^"]*)"\s*$')
+    ADMONITION_RE = re.compile(r'^(\s*(?:!!!|\?\?\?)[+\-]?\s*)(\S+)(\s+"([^"]*)")?\s*$')
+    HEADER_RE = re.compile(r'^(#{1,6}\s+)(.*)$')
+    PREFIX_RE = re.compile(r'^(\s*)((?:[-*+]|\d+\.)\s+)+(.*)$')
+    QUOTE_RE = re.compile(r'^(\s*(?:>\s*)+)(.*)$')
+    IMAGE_RE = re.compile(r'!\[[^\]]*\]\([^)]*\)')
+    LINK_RE = re.compile(r'\[([^\]]*)\]\(([^)]*)\)')
+    INLINE_CODE_RE = re.compile(r'`[^`\n]+`')
+    HTML_TAG_RE = re.compile(r'</?[^>]+>')
+    MKDOCS_ATTRS_RE = re.compile(r'\{[.:][^}]*\}')
+    ICON_SHORTCODE_RE = re.compile(r':[\w-]+:')
+    BARE_URL_RE = re.compile(r'https?://\S+')
 
     def process_file(self, input_path: Path, output_path: Path) -> int:
         """Process a single Markdown file and return count of translated segments"""
         with open(input_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+            lines = f.read().split('\n')
 
-        # Find all matches for all patterns
-        all_matches = []
-        for pattern, elem_type in self.patterns:
-            for match in pattern.finditer(content):
-                all_matches.append({
-                    'start': match.start(),
-                    'end': match.end(),
-                    'type': elem_type,
-                    'full_match': match.group(0),
-                    'groups': match.groups()
-                })
-
-        # Sort matches by position
-        all_matches.sort(key=lambda x: x['start'])
-
-        # Process the content in order
-        result_parts = []
-        last_pos = 0
         translated_count = 0
+        in_frontmatter = lines and lines[0].strip() == '---'
+        in_code_block = False
+        code_fence = None
 
-        for match in all_matches:
-            # Add text before this match
-            text_before = content[last_pos:match['start']]
-            if text_before and text_before.strip():
-                translated = translate_text(text_before)
-                if translated != text_before:
-                    translated_count += 1
-                result_parts.append(translated)
-            else:
-                result_parts.append(text_before)
+        result_lines = []
+        for index, line in enumerate(lines):
+            if in_frontmatter:
+                result_lines.append(line)
+                if index > 0 and line.strip() == '---':
+                    in_frontmatter = False
+                continue
 
-            # Process the matched element
-            elem_type = match['type']
-            if elem_type in ['CODE_BLOCK', 'INLINE_CODE', 'HTML', 'HR', 'FRONTMATTER']:
-                # Don't translate these elements
-                result_parts.append(match['full_match'])
-            elif elem_type == 'LINK':
-                link_text, url = match['groups']
-                translated_text = translate_text(link_text)
-                if translated_text != link_text:
-                    translated_count += 1
-                result_parts.append(f'[{translated_text}]({url})')
-            elif elem_type == 'IMAGE':
-                alt_text, url = match['groups']
-                translated_alt = translate_text(alt_text)
-                if translated_alt != alt_text:
-                    translated_count += 1
-                result_parts.append(f'![{translated_alt}]({url})')
-            elif elem_type == 'HEADER':
-                hashes, text = match['groups']
-                # Preserve header structure and spacing
-                translated_text = translate_text(text.strip())
-                if translated_text != text.strip():
-                    translated_count += 1
-                # Add newline after header if it was followed by text
-                result_parts.append(f'{hashes} {translated_text.strip()}')
-            elif elem_type == 'LIST':
-                prefix, text = match['groups']
-                translated_text = translate_text(text)
-                if translated_text != text:
-                    translated_count += 1
-                result_parts.append(f'{prefix} {translated_text}')
-            elif elem_type == 'BLOCKQUOTE':
-                prefix, text = match['groups']
-                translated_text = translate_text(text)
-                if translated_text != text:
-                    translated_count += 1
-                result_parts.append(f'{prefix}{translated_text}')
+            fence_match = self.FENCE_RE.match(line)
+            if fence_match:
+                fence = fence_match.group(2)
+                if not in_code_block:
+                    in_code_block = True
+                    code_fence = fence[0] * 3
+                elif fence.startswith(code_fence[0]):
+                    in_code_block = False
+                    code_fence = None
+                result_lines.append(line)
+                continue
 
-            last_pos = match['end']
+            if in_code_block:
+                result_lines.append(line)
+                continue
 
-        # Add remaining text after last match
-        remaining_text = content[last_pos:]
-        if remaining_text and remaining_text.strip():
-            translated = translate_text(remaining_text)
-            if translated != remaining_text:
-                translated_count += 1
-            result_parts.append(translated)
-        else:
-            result_parts.append(remaining_text)
+            processed, count = self.process_line(line)
+            translated_count += count
+            result_lines.append(processed)
 
-        # Join all parts
-        translated_content = ''.join(result_parts)
+        translated_content = '\n'.join(result_lines)
 
-        # Write result
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(translated_content)
 
         return translated_count
+
+    def process_line(self, line: str):
+        """Translate a single Markdown line, returns (new_line, translated_count)"""
+        if not line.strip():
+            return line, 0
+
+        indent_match = re.match(r'^(\s*)\S', line)
+        indent = indent_match.group(1) if indent_match else ''
+        body = line[len(indent):]
+
+        stripped = body.strip()
+
+        if stripped in ('---', '***', '___'):
+            return line, 0
+
+        tab_match = self.TAB_RE.match(body)
+        if tab_match:
+            translated = self._single_line(translate_text(tab_match.group(2)))
+            new_body = f'{tab_match.group(1)}"{translated}"'
+            return indent + new_body, 0 if translated == tab_match.group(2) else 1
+
+        admonition_match = self.ADMONITION_RE.match(body)
+        if admonition_match:
+            if admonition_match.group(4) is None:
+                return line, 0
+            original = admonition_match.group(4)
+            translated = self._single_line(translate_text(original))
+            new_body = f'{admonition_match.group(1)}{admonition_match.group(2)} "{translated}"'
+            return indent + new_body, 0 if translated == original else 1
+
+        header_match = self.HEADER_RE.match(body)
+        if header_match:
+            translated, count = self.translate_inline(header_match.group(2))
+            return indent + header_match.group(1) + translated, count
+
+        quote_match = self.QUOTE_RE.match(body)
+        if quote_match:
+            inner, count = self.process_line(indent + quote_match.group(2))
+            return indent + quote_match.group(1) + inner.lstrip(), count
+
+        prefix_match = self.PREFIX_RE.match(body)
+        if prefix_match:
+            translated, count = self.translate_inline(prefix_match.group(3))
+            new_body = prefix_match.group(1) + prefix_match.group(2) + translated
+            return indent + new_body, count
+
+        translated, count = self.translate_inline(body)
+        return indent + translated, count
+
+    def translate_inline(self, text: str):
+        """Translate inline text while protecting URLs, code, images, HTML and mkdocs attributes"""
+        placeholders = []
+
+        def stash(match):
+            placeholders.append(match.group(0))
+            return f'{PLACEHOLDER_START}{len(placeholders) - 1}{PLACEHOLDER_END}'
+
+        protected = self.IMAGE_RE.sub(stash, text)
+
+        def stash_link(match):
+            label, url = match.group(1), match.group(2)
+            placeholders.append(url)
+            token = f'{PLACEHOLDER_START}{len(placeholders) - 1}{PLACEHOLDER_END}'
+            return f'[{label}]({token})' if label else f'[]({token})'
+
+        protected = self.LINK_RE.sub(stash_link, protected)
+        protected = self.INLINE_CODE_RE.sub(stash, protected)
+        protected = self.HTML_TAG_RE.sub(stash, protected)
+        protected = self.MKDOCS_ATTRS_RE.sub(stash, protected)
+        protected = self.ICON_SHORTCODE_RE.sub(stash, protected)
+        protected = self.BARE_URL_RE.sub(stash, protected)
+
+        if not protected.strip(PLACEHOLDER_START + PLACEHOLDER_END + ' '):
+            return text, 0
+
+        translated = self._single_line(translate_text(protected))
+
+        def restore(match):
+            idx = int(match.group(1))
+            if 0 <= idx < len(placeholders):
+                return placeholders[idx]
+            return match.group(0)
+
+        restored = re.sub(
+            re.escape(PLACEHOLDER_START) + r'(\d+)' + re.escape(PLACEHOLDER_END),
+            restore,
+            translated,
+        )
+        count = 0 if restored == text else 1
+        return restored, count
+
+    @staticmethod
+    def _single_line(text: str) -> str:
+        return re.sub(r'\s*\n\s*', ' ', text).strip()
 
 # ======================
 # FILE PROCESSING
