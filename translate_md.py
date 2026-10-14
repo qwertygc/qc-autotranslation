@@ -226,10 +226,6 @@ def translate_with_apertium(text: str) -> str:
 # MARKDOWN PROCESSING
 # ======================
 
-PLACEHOLDER_START = '\ue000'
-PLACEHOLDER_END = '\ue001'
-
-
 class MarkdownProcessor:
     """Process Markdown content line by line, preserving structure while translating text"""
 
@@ -239,13 +235,22 @@ class MarkdownProcessor:
     HEADER_RE = re.compile(r'^(#{1,6}\s+)(.*)$')
     PREFIX_RE = re.compile(r'^(\s*)((?:[-*+]|\d+\.)\s+)+(.*)$')
     QUOTE_RE = re.compile(r'^(\s*(?:>\s*)+)(.*)$')
-    IMAGE_RE = re.compile(r'!\[[^\]]*\]\([^)]*\)')
+    IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(([^)]*)\)')
     LINK_RE = re.compile(r'\[([^\]]*)\]\(([^)]*)\)')
     INLINE_CODE_RE = re.compile(r'`[^`\n]+`')
     HTML_TAG_RE = re.compile(r'</?[^>]+>')
-    MKDOCS_ATTRS_RE = re.compile(r'\{[.:][^}]*\}')
+    MKDOCS_ATTRS_RE = re.compile(r'\{\s*[.:][^}]*\}')
     ICON_SHORTCODE_RE = re.compile(r':[\w-]+:')
     BARE_URL_RE = re.compile(r'https?://\S+')
+    TOKEN_RE = re.compile(
+        r'(?P<image>!\[[^\]]*\]\([^)]*\))'
+        r'|(?P<link>\[[^\]]*\]\([^)]*\))'
+        r'|(?P<code>`[^`\n]+`)'
+        r'|(?P<html></?[^>]+>)'
+        r'|(?P<attrs>\{\s*[.:][^}]*\})'
+        r'|(?P<icon>:[\w-]+:)'
+        r'|(?P<url>https?://\S+)'
+    )
 
     def process_file(self, input_path: Path, output_path: Path) -> int:
         """Process a single Markdown file and return count of translated segments"""
@@ -341,46 +346,50 @@ class MarkdownProcessor:
         return indent + translated, count
 
     def translate_inline(self, text: str):
-        """Translate inline text while protecting URLs, code, images, HTML and mkdocs attributes"""
-        placeholders = []
+        """Translate inline text; URLs, code, images, HTML and mkdocs attributes never reach the engine"""
+        parts = []
+        translated_count = 0
+        last_pos = 0
 
-        def stash(match):
-            placeholders.append(match.group(0))
-            return f'{PLACEHOLDER_START}{len(placeholders) - 1}{PLACEHOLDER_END}'
+        for match in self.TOKEN_RE.finditer(text):
+            fragment = text[last_pos:match.start()]
+            processed, count = self.translate_fragment(fragment)
+            translated_count += count
+            parts.append(processed)
 
-        protected = self.IMAGE_RE.sub(stash, text)
+            token = match.group(0)
+            kind = match.lastgroup
+            if kind in ('link', 'image'):
+                parsed = self.IMAGE_RE.match(token) if kind == 'image' else self.LINK_RE.match(token)
+                label, url = parsed.group(1), parsed.group(2)
+                if label.strip():
+                    translated_label, count = self.translate_inline(label)
+                    translated_count += count
+                    prefix = '!' if kind == 'image' else ''
+                    token = f'{prefix}[{translated_label}]({url})'
+            parts.append(token)
+            last_pos = match.end()
 
-        def stash_link(match):
-            label, url = match.group(1), match.group(2)
-            placeholders.append(url)
-            token = f'{PLACEHOLDER_START}{len(placeholders) - 1}{PLACEHOLDER_END}'
-            return f'[{label}]({token})' if label else f'[]({token})'
+        fragment = text[last_pos:]
+        processed, count = self.translate_fragment(fragment)
+        translated_count += count
+        parts.append(processed)
 
-        protected = self.LINK_RE.sub(stash_link, protected)
-        protected = self.INLINE_CODE_RE.sub(stash, protected)
-        protected = self.HTML_TAG_RE.sub(stash, protected)
-        protected = self.MKDOCS_ATTRS_RE.sub(stash, protected)
-        protected = self.ICON_SHORTCODE_RE.sub(stash, protected)
-        protected = self.BARE_URL_RE.sub(stash, protected)
+        return ''.join(parts), translated_count
 
-        if not protected.strip(PLACEHOLDER_START + PLACEHOLDER_END + ' '):
-            return text, 0
+    def translate_fragment(self, fragment: str):
+        """Translate a pure-text fragment, preserving leading and trailing whitespace"""
+        if not fragment or not fragment.strip():
+            return fragment, 0
 
-        translated = self._single_line(translate_text(protected))
+        leading = fragment[:len(fragment) - len(fragment.lstrip())]
+        trailing = fragment[len(fragment.rstrip()):]
+        core = fragment.strip()
 
-        def restore(match):
-            idx = int(match.group(1))
-            if 0 <= idx < len(placeholders):
-                return placeholders[idx]
-            return match.group(0)
-
-        restored = re.sub(
-            re.escape(PLACEHOLDER_START) + r'(\d+)' + re.escape(PLACEHOLDER_END),
-            restore,
-            translated,
-        )
-        count = 0 if restored == text else 1
-        return restored, count
+        translated = self._single_line(translate_text(core))
+        if translated == core:
+            return fragment, 0
+        return leading + translated + trailing, 1
 
     @staticmethod
     def _single_line(text: str) -> str:
