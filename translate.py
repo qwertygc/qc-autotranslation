@@ -84,21 +84,22 @@ deepL_translator = None
 lindat_session = None
 apertium_session = None
 
-def init_provider() -> None:
-    """Initialize the selected translation provider"""
+def init_provider() -> bool:
+    """Initialize the selected translation provider. Returns True if ready, False if the language must be skipped."""
     global argos_from_lang, argos_to_lang, deepL_translator, lindat_session, apertium_session
 
     if PROVIDER == 'deepl':
-        init_deepl()
+        return init_deepl()
     elif PROVIDER == 'lindat':
-        init_lindat()
+        return init_lindat()
     elif PROVIDER == 'apertium':
-        init_apertium()
+        return init_apertium()
     else:
-        init_argos()
+        return init_argos()
 
-def init_argos() -> None:
-    """Initialize Argostranslate with EN -> TARGET_LANG"""
+def init_argos() -> bool:
+    """Initialize Argostranslate with EN -> TARGET_LANG.
+    Returns False (skip language) if the language pair does not exist in Argos."""
     global argos_from_lang, argos_to_lang
     try:
         from argostranslate import package, translate
@@ -111,8 +112,13 @@ def init_argos() -> None:
             print(f"Installing EN -> {TARGET_LANG} models...")
             package.update_package_index()
             available = package.get_available_packages()
-            pkg = next(p for p in available if p.from_code == "en" and p.to_code == TARGET_LANG)
-            # Use install_package_for_language_pair which handles the download automatically
+            pkg = next((p for p in available if p.from_code == "en" and p.to_code == TARGET_LANG), None)
+
+            # Language pair does not exist in Argos -> skip this language
+            if pkg is None:
+                print(f"\u26A0 Language pair EN -> {TARGET_LANG} does not exist in Argos, skipping")
+                return False
+
             package.install_package_for_language_pair("en", TARGET_LANG)
             # Reload installed languages
             installed_languages = translate.get_installed_languages()
@@ -121,11 +127,12 @@ def init_argos() -> None:
 
         argos_from_lang, argos_to_lang = from_lang, to_lang
         print(f"\u2713 Argostranslate ready (EN -> {TARGET_LANG.upper()})")
+        return True
     except Exception as e:
-        print(f"\u2717 Argostranslate init failed: {e}")
-        exit(1)
+        print(f"\u26A0 Argostranslate init failed for {TARGET_LANG}: {e} -> skipping")
+        return False
 
-def init_deepl() -> None:
+def init_deepl() -> bool:
     """Initialize DeepL translator"""
     global deepL_translator
     if not DEEPL_KEY or DEEPL_KEY == 'None' or DEEPL_KEY == '':
@@ -136,6 +143,7 @@ def init_deepl() -> None:
         import deepl
         deepL_translator = deepl.Translator(DEEPL_KEY)
         print(f"\u2713 DeepL ready (EN -> {TARGET_LANG.upper()})")
+        return True
     except deepl.exceptions.AuthorizationException:
         print("\u2717 DeepL API key is invalid")
         exit(1)
@@ -143,7 +151,7 @@ def init_deepl() -> None:
         print(f"\u2717 DeepL init failed: {e}")
         exit(1)
 
-def init_lindat() -> None:
+def init_lindat() -> bool:
     """Initialize LINDAT translation service"""
     global lindat_session
     try:
@@ -167,11 +175,12 @@ def init_lindat() -> None:
             print(f"   Available models: {response.text[:500]}...")
 
         print(f"\u2713 LINDAT ready (EN -> {TARGET_LANG.upper()})")
+        return True
     except Exception as e:
         print(f"\u2717 LINDAT init failed: {e}")
         exit(1)
 
-def init_apertium() -> None:
+def init_apertium() -> bool:
     """Initialize Apertium translation service"""
     global apertium_session
     try:
@@ -196,6 +205,7 @@ def init_apertium() -> None:
             print(f"   You can check available pairs at: https://apertium.org/apy/listPairs")
 
         print(f"\u2713 Apertium ready (EN -> {TARGET_LANG.upper()})")
+        return True
     except Exception as e:
         print(f"\u2717 Apertium init failed: {e}")
         exit(1)
@@ -325,6 +335,11 @@ def process_po_file() -> int:
     if not PO_INPUT.exists():
         return 0
 
+    # Already translated -> skip this file
+    if PO_OUTPUT.exists():
+        print(f"  \u21B7 {PO_OUTPUT.name} already exists in translated/, skipping")
+        return 0
+
     po = polib.pofile(str(PO_INPUT))
     translated_count = 0
     duplicates_merged = 0
@@ -430,6 +445,11 @@ def process_ts_file() -> int:
     if not TS_INPUT.exists():
         return 0
 
+    # Already translated -> skip this file
+    if TS_OUTPUT.exists():
+        print(f"  \u21B7 {TS_OUTPUT.name} already exists in translated/, skipping")
+        return 0
+
     with open(TS_INPUT, 'r', encoding='utf-8') as f:
         soup = BeautifulSoup(f, 'xml')
 
@@ -498,8 +518,9 @@ def main() -> None:
         print("Error: --all and --lang cannot be used simultaneously. Use either --all or --lang.")
         return
 
+    global TARGET_LANG, PO_INPUT, PO_OUTPUT, TS_INPUT, TS_OUTPUT, PROVIDER
+
     for lang in available_languages:
-        global TARGET_LANG, PO_INPUT, PO_OUTPUT, TS_INPUT, TS_OUTPUT
         TARGET_LANG = lang
 
         # Reload configuration for each language
@@ -511,17 +532,26 @@ def main() -> None:
         TRANSLATED_DIR = BASE_DIR / "translated"
         TRANSLATED_DIR.mkdir(exist_ok=True)
         PO_INPUT = BASE_DIR / f"{TARGET_LANG}.po"
-        PO_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.po"
+        PO_OUTPUT = TRANSLATED_DIR / f"{TARGET_LANG}.po"
         TS_INPUT = BASE_DIR / f"{TARGET_LANG}.ts"
-        TS_OUTPUT = BASE_DIR / TRANSLATED_DIR / f"{TARGET_LANG}.ts"
+        TS_OUTPUT = TRANSLATED_DIR / f"{TARGET_LANG}.ts"
 
         # Check if files exist
         if not PO_INPUT.exists() and not TS_INPUT.exists():
             print(f"No .po or .ts file found for language {TARGET_LANG}")
             continue
 
+        # If every existing input file already has its output in translated/, skip the language
+        po_done = (not PO_INPUT.exists()) or PO_OUTPUT.exists()
+        ts_done = (not TS_INPUT.exists()) or TS_OUTPUT.exists()
+        if po_done and ts_done:
+            print(f"\u21B7 {TARGET_LANG}: already in translated/, skipping")
+            continue
+
         # Initialize the translation provider
-        init_provider()
+        # If the language is not supported (e.g., not in Argos), skip and go to the next one
+        if not init_provider():
+            continue
 
         # Process files
         mode_description = "ALL entries" if RETRANSLATE_ALL else "empty and non-validated entries"
@@ -529,7 +559,7 @@ def main() -> None:
         print("-" * 50)
 
         total = process_po_file() + process_ts_file()
-        print(f"\n✓ Done! {total} strings translated and marked for review for {TARGET_LANG.upper()}.")
+        print(f"\n\u2713 Done! {total} strings translated and marked for review for {TARGET_LANG.upper()}.")
 
 if __name__ == "__main__":
     main()
